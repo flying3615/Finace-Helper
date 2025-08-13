@@ -14,6 +14,7 @@ import dayjs from 'dayjs';
 import useCategoryColors from './hooks/useCategoryColors';
 import useTransactionsStats from './hooks/useTransactionsStats';
 import useMonthlyChartOption from './hooks/useMonthlyChartOption';
+import usePersistedTransactions from './hooks/usePersistedTransactions';
 import AnalysisFilterBar from './components/AnalysisFilterBar';
 import SettingsDrawer from './components/SettingsDrawer';
 import SummaryOrPieCard from './components/SummaryOrPieCard';
@@ -33,6 +34,7 @@ function App() {
   const { token } = theme.useToken();
   const categoryColors = useCategoryColors();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  usePersistedTransactions(transactions, (next) => setTransactions(next));
 
   // 统计逻辑 & 月份图表（需在图表配置前准备好）
   const { filtered, totals, byCategory, byAccount, topMerchants, monthly } = useTransactionsStats(

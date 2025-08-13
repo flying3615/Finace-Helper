@@ -1,10 +1,11 @@
 import Dexie, { type Table } from 'dexie';
-import type { Category, CategoryRule, MerchantAlias } from '../types';
+import type { Category, CategoryRule, MerchantAlias, Transaction } from '../types';
 
 export class FinanceDB extends Dexie {
   categories!: Table<Category, number>;
   rules!: Table<CategoryRule, number>;
   merchantAliases!: Table<MerchantAlias, number>;
+  transactions!: Table<Transaction, string>;
 
   constructor() {
     super('finance-helper');
@@ -14,6 +15,10 @@ export class FinanceDB extends Dexie {
     });
     this.version(2).stores({
       merchantAliases: '++id, canonicalName, createdAt',
+    });
+    this.version(3).stores({
+      // 使用字符串主键 id（CSV 导入时生成），并为常用字段建立索引
+      transactions: '&id, date, account, merchant, merchantNorm, category',
     });
   }
 }
