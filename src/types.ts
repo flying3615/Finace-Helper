@@ -6,6 +6,7 @@ export interface Transaction {
   amount: number; // 负数=支出，正数=收入
   currency: Currency;
   merchant?: string;
+  merchantNorm?: string; // 归一化后的商户名
   category?: string;
   note?: string;
   account?: string; // 账户/卡信息（如卡号、账户号或来源标签：信用卡/储蓄卡）
@@ -28,6 +29,15 @@ export interface CategoryRule {
   pattern: string; // 正则表达式文本
   flags?: string; // 如 'i'
   categoryId: number; // 指向 Category
+  enabled: boolean;
+  createdAt: number;
+}
+
+export interface MerchantAlias {
+  id?: number;
+  pattern: string; // 正则
+  flags?: string; // 修饰符，如 i
+  canonicalName: string; // 标准商户名
   enabled: boolean;
   createdAt: number;
 }

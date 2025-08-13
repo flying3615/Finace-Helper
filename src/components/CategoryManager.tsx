@@ -52,13 +52,7 @@ export default function CategoryManager() {
     <Card
       title="分类管理"
       bordered={false}
-      extra={
-        <Space>
-          <Button onClick={exportData}>导出</Button>
-          <Button onClick={() => importInputRef.current?.click()}>导入</Button>
-          <Button type="primary" onClick={() => setVisible(true)}>新增分类</Button>
-        </Space>
-      }
+      extra={<Button type="primary" onClick={() => setVisible(true)}>新增分类</Button>}
     >
       <Typography.Paragraph type="secondary">
         创建常用分类，并为分类添加“匹配规则”（正则），系统导入交易时会按照规则自动归类。
@@ -215,31 +209,7 @@ export default function CategoryManager() {
     });
   }
 
-  async function exportData() {
-    const [cats, rls] = await Promise.all([
-      db.categories.orderBy('createdAt').toArray(),
-      db.rules.orderBy('createdAt').toArray(),
-    ]);
-    const idToName = new Map<number, string>();
-    cats.forEach((c) => {
-      if (typeof c.id === 'number') idToName.set(c.id, c.name);
-    });
-    const payload = {
-      version: 1,
-      categories: cats.map(({ id, ...rest }) => rest),
-      rules: rls.map(({ id, categoryId, ...rest }) => ({ ...rest, categoryName: idToName.get(categoryId) })),
-      exportedAt: Date.now(),
-    } as const;
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const date = new Date();
-    const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    a.href = url;
-    a.download = `finance-helper-categories-${ymd}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // 导入/导出的入口已移动到设置面板
 
   async function importData(json: any) {
     if (!json || !Array.isArray(json.categories) || !Array.isArray(json.rules)) {

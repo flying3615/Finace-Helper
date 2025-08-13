@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, Col, DatePicker, Divider, Drawer, Form, Layout, Row, Segmented, Space, Statistic, Table, Tabs, Typography, Upload, theme, message } from 'antd';
+import { Button, Card, Col, DatePicker, Divider, Drawer, Form, Layout, Row, Segmented, Space, Statistic, Table, Tabs, Typography, Upload, theme, message, Switch } from 'antd';
 import { SettingOutlined, UploadOutlined, ImportOutlined, ExportOutlined, SyncOutlined, DeleteOutlined, CalendarOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import EChartsReact from 'echarts-for-react';
 import { parseCsv, type CsvMapping } from './utils/parseCsv';
 import { applyRulesAsync } from './utils/categorize';
+import { normalizeMerchantsAsync } from './utils/normalize';
 import CategoryManager from './components/CategoryManager';
+import MerchantManager from './components/MerchantManager';
 import type { Transaction } from './types';
 import './App.css';
 import { db } from './store/db';
 import dayjs from 'dayjs';
+import { exportCategoriesAndRules, importCategoriesAndRules, exportMerchantAliases, importMerchantAliases } from './utils/io';
 
 // 留空以自动从 CSV 表头推断；如需固定某模板，可在此覆盖
 const defaultMapping: CsvMapping | undefined = undefined;
@@ -69,7 +72,8 @@ function App() {
     beforeUpload: async (file) => {
       const parsed = await parseCsv(file, defaultMapping);
       const withCategory = await applyRulesAsync(parsed);
-      setTransactions((prev) => mergeTransactions(prev, withCategory));
+      const withNorm = await normalizeMerchantsAsync(withCategory);
+      setTransactions((prev) => mergeTransactions(prev, withNorm));
       return false;
     },
   };
@@ -119,6 +123,24 @@ function App() {
     }
     return Array.from(sumByAcc, ([name, value]) => ({ name, value: Number(value.toFixed(2)) }));
   }, [baseByMonth]);
+
+  const topMerchants = useMemo(() => {
+    const isIncome = view === '收入';
+    const isExpense = view === '支出' || view === '全部';
+    const agg = new Map<string, number>();
+    for (const t of filtered) {
+      const name = t.merchantNorm ?? t.merchant ?? '未知商户';
+      if (!name) continue;
+      if (isIncome && t.amount > 0) {
+        agg.set(name, (agg.get(name) ?? 0) + t.amount);
+      } else if (isExpense && t.amount < 0) {
+        agg.set(name, (agg.get(name) ?? 0) + Math.abs(t.amount));
+      }
+    }
+    const arr = Array.from(agg, ([name, value]) => ({ name, value: Number(value.toFixed(2)) }));
+    arr.sort((a, b) => b.value - a.value);
+    return arr.slice(0, 10);
+  }, [filtered, view]);
 
   const isAllView = view === '全部';
   const chartOption = ((): any => {
@@ -170,21 +192,110 @@ function App() {
   }, [transactions]);
 
   const [monthlyMetric, setMonthlyMetric] = useState<'expense' | 'income' | 'net'>('expense');
+  const [compareMode, setCompareMode] = useState<'none' | 'mom' | 'yoy'>('none');
+  const [forecastOn, setForecastOn] = useState<boolean>(false);
+  const [maWindow] = useState<number>(3);
   const monthlyChart = useMemo(() => {
     const x = monthly.map((x) => x.month);
     const y = monthly.map((x) => (monthlyMetric === 'expense' ? x.expense : monthlyMetric === 'income' ? x.income : x.net));
     const color = monthlyMetric === 'expense' ? '#ff4d4f' : monthlyMetric === 'income' ? '#52c41a' : '#1677ff';
+
+    // 对比序列
+    let refData: Array<number | null> | null = null;
+    if (compareMode !== 'none' && x.length > 0) {
+      refData = new Array(x.length).fill(null);
+      if (compareMode === 'mom') {
+        const monthIndex = new Map<string, number>();
+        x.forEach((m, idx) => monthIndex.set(m, idx));
+        for (let i = 0; i < x.length; i += 1) {
+          const prevMonth = dayjs(x[i], 'YYYY-MM').add(-1, 'month').format('YYYY-MM');
+          const idx = monthIndex.get(prevMonth);
+          if (typeof idx === 'number') refData[i] = Number(y[idx]?.toFixed(2));
+        }
+      } else if (compareMode === 'yoy') {
+        const monthIndex = new Map<string, number>();
+        x.forEach((m, idx) => monthIndex.set(m, idx));
+        for (let i = 0; i < x.length; i += 1) {
+          const lastYear = dayjs(x[i], 'YYYY-MM').add(-1, 'year').format('YYYY-MM');
+          const idx = monthIndex.get(lastYear);
+          if (typeof idx === 'number') refData[i] = Number(y[idx]?.toFixed(2));
+        }
+      }
+    }
+
+    // 构造序列与横轴（含预测）
+    const xAll = [...x];
+    const series: any[] = [
+      { name: '本期', type: 'bar', data: y.map((n) => Number(n.toFixed(2))), barWidth: '45%', itemStyle: { color } },
+    ];
+    if (refData) {
+      series.push({
+        name: compareMode === 'mom' ? '上月' : '去年同月',
+        type: 'line',
+        smooth: false,
+        symbolSize: 6,
+        lineStyle: { type: 'dashed', width: 1.5 },
+        itemStyle: { color: '#8c8c8c' },
+        data: refData,
+      });
+    }
+    // 简单预测：MA(3)
+    let forecastPoint: { nextMonth: string; value: number } | null = null;
+    if (forecastOn && x.length >= maWindow) {
+      const lastN = y.slice(-maWindow);
+      const avg = lastN.reduce((s, v) => s + v, 0) / maWindow;
+      const nextMonth = dayjs(x[x.length - 1], 'YYYY-MM').add(1, 'month').format('YYYY-MM');
+      forecastPoint = { nextMonth, value: Number(avg.toFixed(2)) };
+      xAll.push(forecastPoint.nextMonth);
+      const predData = new Array(xAll.length).fill(null);
+      predData[predData.length - 1] = forecastPoint.value;
+      series.push({
+        name: '预测',
+        type: 'bar',
+        data: predData,
+        barWidth: '45%',
+        itemStyle: { color, opacity: 0.35, borderColor: color, borderType: 'dashed', borderWidth: 1 },
+      });
+    }
+
     return {
-      tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: x },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any[]) => {
+          const cur = params.find((p) => p.seriesName === '本期');
+          const ref = params.find((p) => p.seriesName === (compareMode === 'mom' ? '上月' : '去年同月'));
+          const pred = params.find((p) => p.seriesName === '预测');
+          const curVal = typeof cur?.value === 'number' ? cur.value : null;
+          const refVal = typeof ref?.value === 'number' ? ref.value : null;
+          const predVal = typeof pred?.value === 'number' ? pred.value : null;
+          const title = params[0]?.axisValueLabel ?? '';
+          const lines: string[] = [];
+          if (cur) lines.push(`${cur.marker}${cur.seriesName}: ${curVal?.toFixed ? curVal.toFixed(2) : curVal}`);
+          if (ref && compareMode !== 'none') lines.push(`${ref.marker}${ref.seriesName}: ${refVal?.toFixed ? refVal.toFixed(2) : refVal}`);
+          if (pred) lines.push(`${pred.marker}${pred.seriesName}: ${predVal?.toFixed ? predVal.toFixed(2) : predVal}`);
+          if (curVal != null && refVal != null && refVal !== 0) {
+            const delta = curVal - refVal;
+            const pct = (delta / Math.abs(refVal)) * 100;
+            const sign = delta > 0 ? '+' : delta < 0 ? '' : '';
+            lines.push(`差值: ${sign}${delta.toFixed(2)} (${sign}${pct.toFixed(1)}%)`);
+          } else if (compareMode !== 'none') {
+            lines.push('差值: —');
+          }
+          return [title, ...lines].join('<br/>');
+        },
+      },
+      legend:
+        compareMode !== 'none'
+          ? { data: ['本期', compareMode === 'mom' ? '上月' : '去年同月', ...(forecastPoint ? ['预测'] : [])] }
+          : forecastPoint
+          ? { data: ['本期', '预测'] }
+          : undefined,
+      xAxis: { type: 'category', data: xAll },
       yAxis: { type: 'value' },
-      series: [
-        { type: 'bar', data: y.map((n) => Number(n.toFixed(2))), barWidth: '45%', itemStyle: { color } },
-      ],
-      // 使用 axisPointer 高亮，通过 dataset 不触发重建
+      series,
       axisPointer: monthFilter ? { value: monthFilter.format('YYYY-MM'), snap: true } : undefined,
     };
-  }, [monthly, monthlyMetric, monthFilter]);
+  }, [monthly, monthlyMetric, compareMode, monthFilter, forecastOn, maWindow]);
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -268,17 +379,6 @@ function App() {
               <Form.Item label="操作">
                 <Space wrap>
                   <Button
-                    icon={<SyncOutlined />}
-                    onClick={async () => {
-                      const reclassified = await applyRulesAsync(transactions);
-                      setTransactions(reclassified);
-                      message.success('已重新按规则分类');
-                    }}
-                    disabled={transactions.length === 0}
-                  >
-                    重新分类
-                  </Button>
-                  <Button
                     icon={<DeleteOutlined />}
                     danger
                     onClick={() => {
@@ -290,6 +390,74 @@ function App() {
                     清空数据
                   </Button>
                 </Space>
+              </Form.Item>
+              <Divider style={{ margin: '8px 0 16px' }} />
+              <Form.Item label="分类与规则">
+                <Space wrap>
+                  <Button
+                    icon={<SyncOutlined />}
+                    onClick={async () => {
+                      const reclassified = await applyRulesAsync(transactions);
+                      setTransactions(reclassified);
+                      message.success('已重新按规则分类');
+                    }}
+                    disabled={transactions.length === 0}
+                  >
+                    重新分类
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      const blob = await exportCategoriesAndRules();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = `finance-helper-categories-${dayjs().format('YYYY-MM-DD')}.json`; a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >导出分类与规则</Button>
+                  <Button onClick={() => (document.getElementById('import-cats') as HTMLInputElement)?.click()}>导入分类与规则</Button>
+                  <input id="import-cats" type="file" accept="application/json" style={{ display: 'none' }} onChange={async (e) => {
+                    const f = e.target.files?.[0]; if (!f) return;
+                    try { const json = JSON.parse(await f.text()); await importCategoriesAndRules(json); message.success('已导入分类与规则'); }
+                    catch { message.error('导入失败'); }
+                    finally { (e.target as HTMLInputElement).value = ''; }
+                  }} />
+                </Space>
+                <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+                  说明：重新分类会根据当前的分类规则为所有已导入交易重新打标签，不会修改原始导入数据。
+                </Typography.Paragraph>
+              </Form.Item>
+              <Form.Item label="商户规则">
+                <Space wrap>
+                  <Button
+                    onClick={async () => {
+                      const normalized = await normalizeMerchantsAsync(transactions);
+                      setTransactions(normalized);
+                      message.success('已重新归一化商户');
+                    }}
+                    disabled={transactions.length === 0}
+                  >
+                    重新归一化
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      const blob = await exportMerchantAliases();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = `finance-helper-merchant-aliases-${dayjs().format('YYYY-MM-DD')}.json`; a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >导出商户规则</Button>
+                  <Button onClick={() => (document.getElementById('import-merchants') as HTMLInputElement)?.click()}>导入商户规则</Button>
+                  <input id="import-merchants" type="file" accept="application/json" style={{ display: 'none' }} onChange={async (e) => {
+                    const f = e.target.files?.[0]; if (!f) return;
+                    try { const json = JSON.parse(await f.text()); await importMerchantAliases(json); message.success('已导入商户规则'); }
+                    catch { message.error('导入失败'); }
+                    finally { (e.target as HTMLInputElement).value = ''; }
+                  }} />
+                </Space>
+                <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+                  说明：重新归一化会基于商户规则统一商户名称（如合并不同门店），明细与统计优先显示归一化结果。
+                </Typography.Paragraph>
               </Form.Item>
             </Form>
           </Drawer>
@@ -321,10 +489,10 @@ function App() {
                         onChange={(v) => setView(v as any)}
                       />
                       </Space>
-                    </div>
+      </div>
 
                     <Row gutter={[16, 16]}>
-                    <Col xs={24} md={10}>
+                    <Col xs={24} md={12}>
                       <Card
                         title={isAllView ? '收支概览' : '分类占比'}
                         bordered={false}
@@ -351,10 +519,51 @@ function App() {
                             notMerge
                             style={{ height: 360 }}
                           />
-                        </div>
+      </div>
                       </Card>
                     </Col>
-                    <Col xs={24} md={14}>
+                    <Col xs={24} md={12}>
+                      <Card title={`商户 Top ${Math.min(10, topMerchants.length)}（${view === '收入' ? '收入来源' : '支出商户'}）`} bordered={false}>
+                        <EChartsReact
+                          option={{
+                            tooltip: { trigger: 'axis' },
+                            grid: { left: 120, right: 24 },
+                            xAxis: { type: 'value' },
+                            yAxis: { type: 'category', data: topMerchants.map((d) => d.name).reverse() },
+                            series: [
+                              {
+                                type: 'bar',
+                                data: topMerchants.map((d) => d.value).reverse(),
+                                itemStyle: { color: view === '收入' ? '#52c41a' : '#ff7a45' },
+                                barWidth: '55%',
+                              },
+                            ],
+                          }}
+                          style={{ height: Math.max(220, topMerchants.length * 28 + 60) }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24}>
+                      <Card title="账户收支对比" bordered={false}>
+                        <EChartsReact
+                          option={{
+                            tooltip: { trigger: 'axis' },
+                            xAxis: { type: 'category', data: byAccount.map((x) => x.name) },
+                            yAxis: { type: 'value' },
+                            series: [
+                              {
+                                type: 'bar',
+                                data: byAccount.map((x) => x.value),
+                                itemStyle: { color: (p: any) => (p.value >= 0 ? '#52c41a' : '#ff4d4f') },
+                                barWidth: '40%',
+                              },
+                            ],
+                          }}
+                          style={{ height: 260 }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24}>
                       <Card
                         title="明细"
                         bordered={false}
@@ -382,30 +591,10 @@ function App() {
                             },
                             { title: '账户', dataIndex: 'account', width: 140 },
                             { title: '分类', dataIndex: 'category', width: 120, sorter: (a: Transaction, b: Transaction) => (a.category ?? '').localeCompare(b.category ?? '') },
-                            { title: '商户', dataIndex: 'merchant', sorter: (a: Transaction, b: Transaction) => (a.merchant ?? '').localeCompare(b.merchant ?? '') },
+                            { title: '商户', dataIndex: 'merchantNorm', render: (_: any, r: Transaction) => r.merchantNorm ?? r.merchant, sorter: (a: Transaction, b: Transaction) => (a.merchantNorm ?? a.merchant ?? '').localeCompare(b.merchantNorm ?? b.merchant ?? '') },
                             { title: '备注', dataIndex: 'note' },
                           ]}
                           />
-                      </Card>
-                    </Col>
-                    <Col xs={24}>
-                      <Card title="账户收支对比" bordered={false}>
-                        <EChartsReact
-                          option={{
-                            tooltip: { trigger: 'axis' },
-                            xAxis: { type: 'category', data: byAccount.map((x) => x.name) },
-                            yAxis: { type: 'value' },
-                            series: [
-                              {
-                                type: 'bar',
-                                data: byAccount.map((x) => x.value),
-                                itemStyle: { color: (p: any) => (p.value >= 0 ? '#52c41a' : '#ff4d4f') },
-                                barWidth: '40%',
-                              },
-                            ],
-                          }}
-                          style={{ height: 260 }}
-                        />
                       </Card>
                     </Col>
                   </Row>
@@ -420,7 +609,7 @@ function App() {
                     <Col span={24}>
                       <Card
                         title={
-                          <Space>
+                          <Space wrap>
                             <span>月份对比</span>
                             <Segmented
                               options={[
@@ -431,6 +620,19 @@ function App() {
                               value={monthlyMetric}
                               onChange={(v) => setMonthlyMetric(v as any)}
                             />
+                            <Segmented
+                              options={[
+                                { label: '无对比', value: 'none' },
+                                { label: '环比', value: 'mom' },
+                                { label: '同比', value: 'yoy' },
+                              ]}
+                              value={compareMode}
+                              onChange={(v) => setCompareMode(v as any)}
+                            />
+                            <Space>
+                              <span>预测</span>
+                              <Switch checked={forecastOn} onChange={setForecastOn} />
+                            </Space>
                           </Space>
                         }
                         bordered={false}
@@ -460,6 +662,17 @@ function App() {
                   <Row gutter={[16, 16]}>
                     <Col span={24}>
                       <CategoryManager />
+                    </Col>
+                  </Row>
+                ),
+              },
+              {
+                key: 'merchants',
+                label: '商户管理',
+                children: (
+                  <Row gutter={[16, 16]}>
+                    <Col span={24}>
+                      <MerchantManager />
                     </Col>
                   </Row>
                 ),
