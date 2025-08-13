@@ -2,9 +2,12 @@ name: Deploy to Cloudflare Pages
 
 on:
   push:
-    branches: [ main ] # 如使用 master，请改为 [ master ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
+
+env:
+  CF_PAGES_PROJECT: finace-helper   # 用你在 Cloudflare 创建的项目名
 
 jobs:
   build-and-deploy:
@@ -28,12 +31,19 @@ jobs:
       - name: Build
         run: npm run build
 
+      # 可选：首次运行自动创建 Pages 项目（若已存在会忽略）
+      - name: Ensure Cloudflare Pages project exists
+        run: npx wrangler@3 pages project create "$CF_PAGES_PROJECT" --production-branch=main || echo "Project exists"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: finace-helper # 可自定义，首次会自动创建项目
+          projectName: ${{ env.CF_PAGES_PROJECT }}
           directory: dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           branch: main
