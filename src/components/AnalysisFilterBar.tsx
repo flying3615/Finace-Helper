@@ -1,5 +1,6 @@
 import { Button, DatePicker, Segmented, Space } from 'antd';
 import { CalendarOutlined } from '@ant-design/icons';
+import './AnalysisFilterBar.css';
 import dayjs from 'dayjs';
 
 type ViewType = '全部' | '支出' | '收入';
@@ -14,7 +15,7 @@ export interface AnalysisFilterBarProps {
 export default function AnalysisFilterBar(props: AnalysisFilterBarProps) {
   const { month, onChangeMonth, view, onChangeView } = props;
   return (
-    <div className="filter-bar">
+    <div className="filter-bar analysis-filter-bar">
       <Space wrap>
         <DatePicker
           picker="month"
@@ -22,7 +23,7 @@ export default function AnalysisFilterBar(props: AnalysisFilterBarProps) {
           placeholder="选择月份（空=全部）"
           value={month}
           onChange={(v) => onChangeMonth(v)}
-          style={{ width: 180 }}
+          
           suffixIcon={<CalendarOutlined />}
         />
         <Button onClick={() => onChangeMonth(dayjs())}>本月</Button>

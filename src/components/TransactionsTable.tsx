@@ -1,5 +1,6 @@
 import { Table } from 'antd';
 import type { Transaction } from '../types';
+import './TransactionsTable.css';
 
 export interface TransactionsTableProps {
   data: Transaction[];
@@ -8,6 +9,7 @@ export interface TransactionsTableProps {
 export default function TransactionsTable({ data }: TransactionsTableProps) {
   return (
     <Table
+      className="transactions-table"
       size="small"
       rowKey="id"
       dataSource={data}

@@ -1,4 +1,5 @@
 import EChartsReact from 'echarts-for-react';
+import './TopMerchantsChart.css';
 
 export interface TopMerchantsChartProps {
   names: string[];
@@ -9,6 +10,7 @@ export interface TopMerchantsChartProps {
 export default function TopMerchantsChart({ names, values, color }: TopMerchantsChartProps) {
   return (
     <EChartsReact
+      className="top-merchants-chart"
       option={{
         tooltip: { trigger: 'axis' },
         grid: { left: 120, right: 24 },

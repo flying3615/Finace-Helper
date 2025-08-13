@@ -7,6 +7,7 @@ import { applyRulesAsync } from '../utils/categorize';
 import { normalizeMerchantsAsync } from '../utils/normalize';
 import { exportCategoriesAndRules, importCategoriesAndRules, exportMerchantAliases, importMerchantAliases } from '../utils/io';
 import { useRef } from 'react';
+import './SettingsDrawer.css';
 
 export interface SettingsDrawerProps {
   open: boolean;

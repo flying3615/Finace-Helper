@@ -1,5 +1,6 @@
 import { Card, Segmented, Space, Switch } from 'antd';
 import EChartsReact from 'echarts-for-react';
+import './MonthlyComparisonCard.css';
 
 export interface MonthlyComparisonCardProps {
   option: any;
@@ -49,7 +50,7 @@ export default function MonthlyComparisonCard(props: MonthlyComparisonCardProps)
     >
       <EChartsReact
         option={option}
-        style={{ height: 360 }}
+        className="monthly-card__chart"
         onEvents={{
           click: (params: any) => {
             const m = (params?.name ?? params?.axisValue) as string | undefined;

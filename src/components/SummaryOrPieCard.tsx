@@ -1,5 +1,6 @@
 import { Card, Col, Row, Statistic } from 'antd';
 import EChartsReact from 'echarts-for-react';
+import './SummaryOrPieCard.css';
 
 export interface SummaryOrPieCardProps {
   isAllView: boolean;
@@ -16,9 +17,9 @@ export default function SummaryOrPieCard({ isAllView, totals, option, headerBord
       bodyStyle={{ padding: 0 }}
       styles={{ header: { borderBottom: `1px solid ${headerBorderColor}` } }}
     >
-      <div style={{ padding: 16 }}>
+      <div className="summary-or-pie-card__body">
         {isAllView && (
-          <Row gutter={16} style={{ marginBottom: 12 }}>
+          <Row gutter={16} className="summary-or-pie-card__row">
             <Col span={8}>
               <Statistic title="收入" value={totals.income} precision={2} valueStyle={{ color: '#52c41a' }} />
             </Col>

@@ -1,4 +1,5 @@
 import EChartsReact from 'echarts-for-react';
+import './AccountsBarChart.css';
 
 export interface AccountsBarChartProps {
   names: string[];
@@ -8,6 +9,7 @@ export interface AccountsBarChartProps {
 export default function AccountsBarChart({ names, values }: AccountsBarChartProps) {
   return (
     <EChartsReact
+      className="accounts-bar-chart"
       option={{
         tooltip: { trigger: 'axis' },
         xAxis: { type: 'category', data: names },
@@ -21,7 +23,7 @@ export default function AccountsBarChart({ names, values }: AccountsBarChartProp
           },
         ],
       }}
-      style={{ height: 260 }}
+      
     />
   );
 }
