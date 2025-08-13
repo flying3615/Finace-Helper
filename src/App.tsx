@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, Col, DatePicker, Divider, Drawer, Form, Layout, Row, Segmented, Space, Statistic, Table, Tabs, Typography, Upload, theme, message, Switch } from 'antd';
-import { SettingOutlined, UploadOutlined, ImportOutlined, ExportOutlined, SyncOutlined, DeleteOutlined, CalendarOutlined } from '@ant-design/icons';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Card, Col, Layout, Row, Space, Statistic, Tabs, Typography, theme } from 'antd';
+import { SettingOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
-import EChartsReact from 'echarts-for-react';
+//
 import { parseCsv, type CsvMapping } from './utils/parseCsv';
 import { applyRulesAsync } from './utils/categorize';
 import { normalizeMerchantsAsync } from './utils/normalize';
@@ -12,7 +12,13 @@ import type { Transaction } from './types';
 import './App.css';
 import { db } from './store/db';
 import dayjs from 'dayjs';
-import { exportCategoriesAndRules, importCategoriesAndRules, exportMerchantAliases, importMerchantAliases } from './utils/io';
+import AnalysisFilterBar from './components/AnalysisFilterBar';
+import SettingsDrawer from './components/SettingsDrawer';
+import SummaryOrPieCard from './components/SummaryOrPieCard';
+import TopMerchantsChart from './components/TopMerchantsChart';
+import AccountsBarChart from './components/AccountsBarChart';
+import TransactionsTable from './components/TransactionsTable';
+import MonthlyComparisonCard from './components/MonthlyComparisonCard';
 
 // 留空以自动从 CSV 表头推断；如需固定某模板，可在此覆盖
 const defaultMapping: CsvMapping | undefined = undefined;
@@ -24,7 +30,6 @@ function App() {
   const [activeTab, setActiveTab] = useState<'analysis' | 'monthly' | 'categories'>('analysis');
   const { token } = theme.useToken();
   const [categoryColors, setCategoryColors] = useState<Record<string, string | undefined>>({});
-  const importTxInputRef = useRef<HTMLInputElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 刷新分类颜色（安全方案：低频轮询 + 比较，避免 Dexie Observable 依赖）
@@ -311,156 +316,14 @@ function App() {
 
       <Layout.Content style={{ padding: '24px 16px' }}>
         <div className="page-container">
-          <Drawer
-            title="设置"
+          <SettingsDrawer
             open={settingsOpen}
-            width={520}
             onClose={() => setSettingsOpen(false)}
-            bodyStyle={{ paddingTop: 12 }}
-          >
-            <Form layout="vertical" className="settings-drawer-form">
-              <Form.Item label="数据导入">
-                <Upload {...uploadProps}>
-                  <Button type="primary" icon={<UploadOutlined />}>上传 CSV</Button>
-                </Upload>
-              </Form.Item>
-              <Divider style={{ margin: '8px 0 16px' }} />
-              {/* 筛选控件已移至“收支分析”Tab */}
-              <Divider style={{ margin: '8px 0 16px' }} />
-              <Form.Item label="账单备份">
-                <Space wrap>
-                  <Button
-                    icon={<ExportOutlined />}
-                    onClick={() => {
-                      const payload = { version: 1, exportedAt: Date.now(), transactions } as const;
-                      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      const date = dayjs().format('YYYY-MM-DD');
-                      a.href = url;
-                      a.download = `finance-helper-transactions-${date}.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                    disabled={transactions.length === 0}
-                  >
-                    导出账单
-                  </Button>
-                  <Button icon={<ImportOutlined />} onClick={() => importTxInputRef.current?.click()}>导入账单</Button>
-                  <input
-                    type="file"
-                    ref={importTxInputRef}
-                    style={{ display: 'none' }}
-                    accept="application/json"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      try {
-                        const text = await file.text();
-                        const json = JSON.parse(text);
-                        if (!json || !Array.isArray(json.transactions)) {
-                          message.error('导入失败：格式不正确');
-                        } else {
-                          const incoming: Transaction[] = json.transactions as Transaction[];
-                          const withCategory = await applyRulesAsync(incoming);
-                          setTransactions((prev) => mergeTransactions(prev, withCategory));
-                          message.success(`已导入 ${withCategory.length} 条`);
-                        }
-                      } catch {
-                        message.error('导入失败');
-                      } finally {
-                        if (importTxInputRef.current) importTxInputRef.current.value = '';
-                      }
-                    }}
-                  />
-                </Space>
-              </Form.Item>
-              <Divider style={{ margin: '8px 0 16px' }} />
-              <Form.Item label="操作">
-                <Space wrap>
-                  <Button
-                    icon={<DeleteOutlined />}
-                    danger
-                    onClick={() => {
-                      setTransactions([]);
-                      message.success('已清空数据');
-                    }}
-                    disabled={transactions.length === 0}
-                  >
-                    清空数据
-                  </Button>
-                </Space>
-              </Form.Item>
-              <Divider style={{ margin: '8px 0 16px' }} />
-              <Form.Item label="分类与规则">
-                <Space wrap>
-                  <Button
-                    icon={<SyncOutlined />}
-                    onClick={async () => {
-                      const reclassified = await applyRulesAsync(transactions);
-                      setTransactions(reclassified);
-                      message.success('已重新按规则分类');
-                    }}
-                    disabled={transactions.length === 0}
-                  >
-                    重新分类
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      const blob = await exportCategoriesAndRules();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url; a.download = `finance-helper-categories-${dayjs().format('YYYY-MM-DD')}.json`; a.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                  >导出分类与规则</Button>
-                  <Button onClick={() => (document.getElementById('import-cats') as HTMLInputElement)?.click()}>导入分类与规则</Button>
-                  <input id="import-cats" type="file" accept="application/json" style={{ display: 'none' }} onChange={async (e) => {
-                    const f = e.target.files?.[0]; if (!f) return;
-                    try { const json = JSON.parse(await f.text()); await importCategoriesAndRules(json); message.success('已导入分类与规则'); }
-                    catch { message.error('导入失败'); }
-                    finally { (e.target as HTMLInputElement).value = ''; }
-                  }} />
-                </Space>
-                <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                  说明：重新分类会根据当前的分类规则为所有已导入交易重新打标签，不会修改原始导入数据。
-                </Typography.Paragraph>
-              </Form.Item>
-              <Form.Item label="商户规则">
-                <Space wrap>
-                  <Button
-                    onClick={async () => {
-                      const normalized = await normalizeMerchantsAsync(transactions);
-                      setTransactions(normalized);
-                      message.success('已重新归一化商户');
-                    }}
-                    disabled={transactions.length === 0}
-                  >
-                    重新归一化
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      const blob = await exportMerchantAliases();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url; a.download = `finance-helper-merchant-aliases-${dayjs().format('YYYY-MM-DD')}.json`; a.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                  >导出商户规则</Button>
-                  <Button onClick={() => (document.getElementById('import-merchants') as HTMLInputElement)?.click()}>导入商户规则</Button>
-                  <input id="import-merchants" type="file" accept="application/json" style={{ display: 'none' }} onChange={async (e) => {
-                    const f = e.target.files?.[0]; if (!f) return;
-                    try { const json = JSON.parse(await f.text()); await importMerchantAliases(json); message.success('已导入商户规则'); }
-                    catch { message.error('导入失败'); }
-                    finally { (e.target as HTMLInputElement).value = ''; }
-                  }} />
-                </Space>
-                <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                  说明：重新归一化会基于商户规则统一商户名称（如合并不同门店），明细与统计优先显示归一化结果。
-                </Typography.Paragraph>
-              </Form.Item>
-            </Form>
-          </Drawer>
+            uploadProps={uploadProps}
+            transactions={transactions}
+            onMergeTransactions={(incoming) => setTransactions((prev) => mergeTransactions(prev, incoming))}
+            onClear={() => { setTransactions([]); }}
+          />
           <Tabs
             activeKey={activeTab}
             onChange={(k) => setActiveTab(k as any)}
@@ -470,131 +333,25 @@ function App() {
                 label: '收支分析',
                 children: (
                   <>
-                    <div className="filter-bar">
-                      <Space wrap>
-                      <DatePicker
-                        picker="month"
-                        allowClear
-                        placeholder="选择月份（空=全部）"
-                        value={monthFilter}
-                        onChange={(v) => setMonthFilter(v)}
-                        style={{ width: 180 }}
-                        suffixIcon={<CalendarOutlined />}
-                      />
-                      <Button onClick={() => setMonthFilter(dayjs())}>本月</Button>
-                      <Button onClick={() => setMonthFilter(dayjs().add(-1, 'month'))}>上月</Button>
-                      <Segmented
-                        options={['全部', '支出', '收入']}
-                        value={view}
-                        onChange={(v) => setView(v as any)}
-                      />
-                      </Space>
-      </div>
+                    <AnalysisFilterBar month={monthFilter} onChangeMonth={setMonthFilter} view={view} onChangeView={(v) => setView(v)} />
 
                     <Row gutter={[16, 16]}>
                     <Col xs={24} md={12}>
-                      <Card
-                        title={isAllView ? '收支概览' : '分类占比'}
-                        bordered={false}
-                        bodyStyle={{ padding: 0 }}
-                        styles={{ header: { borderBottom: `1px solid ${token.colorSplit}` } }}
-                      >
-                        <div style={{ padding: 16 }}>
-                          {isAllView && (
-                            <Row gutter={16} style={{ marginBottom: 12 }}>
-                              <Col span={8}>
-                                <Statistic title="收入" value={totals.income} precision={2} valueStyle={{ color: '#52c41a' }} />
-                              </Col>
-                              <Col span={8}>
-                                <Statistic title="支出" value={totals.expense} precision={2} valueStyle={{ color: '#ff4d4f' }} />
-                              </Col>
-                              <Col span={8}>
-                                <Statistic title="结余" value={totals.net} precision={2} valueStyle={{ color: totals.net >= 0 ? '#1677ff' : '#fa8c16' }} />
-                              </Col>
-                            </Row>
-                          )}
-                          <EChartsReact
-                            key={`main-chart-${isAllView ? 'all' : 'cat'}`}
-                            option={chartOption}
-                            notMerge
-                            style={{ height: 360 }}
-                          />
-      </div>
-                      </Card>
+                      <SummaryOrPieCard isAllView={isAllView} totals={totals} option={chartOption} headerBorderColor={token.colorSplit} />
                     </Col>
                     <Col xs={24} md={12}>
                       <Card title={`商户 Top ${Math.min(10, topMerchants.length)}（${view === '收入' ? '收入来源' : '支出商户'}）`} bordered={false}>
-                        <EChartsReact
-                          option={{
-                            tooltip: { trigger: 'axis' },
-                            grid: { left: 120, right: 24 },
-                            xAxis: { type: 'value' },
-                            yAxis: { type: 'category', data: topMerchants.map((d) => d.name).reverse() },
-                            series: [
-                              {
-                                type: 'bar',
-                                data: topMerchants.map((d) => d.value).reverse(),
-                                itemStyle: { color: view === '收入' ? '#52c41a' : '#ff7a45' },
-                                barWidth: '55%',
-                              },
-                            ],
-                          }}
-                          style={{ height: Math.max(220, topMerchants.length * 28 + 60) }}
-                        />
+                        <TopMerchantsChart names={topMerchants.map((d) => d.name)} values={topMerchants.map((d) => d.value)} color={view === '收入' ? '#52c41a' : '#ff7a45'} />
                       </Card>
                     </Col>
                     <Col xs={24}>
                       <Card title="账户收支对比" bordered={false}>
-                        <EChartsReact
-                          option={{
-                            tooltip: { trigger: 'axis' },
-                            xAxis: { type: 'category', data: byAccount.map((x) => x.name) },
-                            yAxis: { type: 'value' },
-                            series: [
-                              {
-                                type: 'bar',
-                                data: byAccount.map((x) => x.value),
-                                itemStyle: { color: (p: any) => (p.value >= 0 ? '#52c41a' : '#ff4d4f') },
-                                barWidth: '40%',
-                              },
-                            ],
-                          }}
-                          style={{ height: 260 }}
-                        />
+                        <AccountsBarChart names={byAccount.map((x) => x.name)} values={byAccount.map((x) => x.value)} />
                       </Card>
                     </Col>
                     <Col xs={24}>
-                      <Card
-                        title="明细"
-                        bordered={false}
-                        styles={{ header: { borderBottom: `1px solid ${token.colorSplit}` } }}
-                      >
-                        <Table
-                          size="small"
-                          rowKey="id"
-                          dataSource={filtered}
-                          pagination={{ pageSize: 10 }}
-                          columns={[
-                            {
-                              title: '日期',
-                              dataIndex: 'date',
-                              width: 110,
-                              sorter: (a: Transaction, b: Transaction) => a.date.localeCompare(b.date),
-                            },
-                            {
-                              title: '金额',
-                              dataIndex: 'amount',
-                              render: (v: number) => v.toFixed(2),
-                              width: 120,
-                              sorter: (a: Transaction, b: Transaction) => a.amount - b.amount,
-                              sortDirections: ['descend', 'ascend'],
-                            },
-                            { title: '账户', dataIndex: 'account', width: 140 },
-                            { title: '分类', dataIndex: 'category', width: 120, sorter: (a: Transaction, b: Transaction) => (a.category ?? '').localeCompare(b.category ?? '') },
-                            { title: '商户', dataIndex: 'merchantNorm', render: (_: any, r: Transaction) => r.merchantNorm ?? r.merchant, sorter: (a: Transaction, b: Transaction) => (a.merchantNorm ?? a.merchant ?? '').localeCompare(b.merchantNorm ?? b.merchant ?? '') },
-                            { title: '备注', dataIndex: 'note' },
-                          ]}
-                          />
+                      <Card title="明细" bordered={false} styles={{ header: { borderBottom: `1px solid ${token.colorSplit}` } }}>
+                        <TransactionsTable data={filtered} />
                       </Card>
                     </Col>
                   </Row>
@@ -607,50 +364,16 @@ function App() {
                 children: (
                   <Row gutter={[16, 16]}>
                     <Col span={24}>
-                      <Card
-                        title={
-                          <Space wrap>
-                            <span>月份对比</span>
-                            <Segmented
-                              options={[
-                                { label: '支出', value: 'expense' },
-                                { label: '收入', value: 'income' },
-                                { label: '结余', value: 'net' },
-                              ]}
-                              value={monthlyMetric}
-                              onChange={(v) => setMonthlyMetric(v as any)}
-                            />
-                            <Segmented
-                              options={[
-                                { label: '无对比', value: 'none' },
-                                { label: '环比', value: 'mom' },
-                                { label: '同比', value: 'yoy' },
-                              ]}
-                              value={compareMode}
-                              onChange={(v) => setCompareMode(v as any)}
-                            />
-                            <Space>
-                              <span>预测</span>
-                              <Switch checked={forecastOn} onChange={setForecastOn} />
-                            </Space>
-                          </Space>
-                        }
-                        bordered={false}
-                      >
-                        <EChartsReact
-                          option={monthlyChart}
-                          style={{ height: 360 }}
-                          onEvents={{
-                            click: (params: any) => {
-                              const m = (params?.name ?? params?.axisValue) as string | undefined;
-                              if (m && /^\d{4}-\d{2}$/.test(m)) {
-                                setMonthFilter(dayjs(m, 'YYYY-MM'));
-                                setActiveTab('analysis');
-                              }
-                            },
-                          }}
-                        />
-                      </Card>
+                      <MonthlyComparisonCard
+                        option={monthlyChart}
+                        metric={monthlyMetric}
+                        onChangeMetric={(m) => setMonthlyMetric(m)}
+                        compareMode={compareMode}
+                        onChangeCompare={(m) => setCompareMode(m)}
+                        forecastOn={forecastOn}
+                        onChangeForecast={setForecastOn}
+                        onClickMonth={(ym) => { setMonthFilter(dayjs(ym, 'YYYY-MM')); setActiveTab('analysis'); }}
+                      />
                     </Col>
                   </Row>
                 ),
