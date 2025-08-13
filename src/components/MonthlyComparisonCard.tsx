@@ -3,12 +3,12 @@ import EChartsReact from 'echarts-for-react';
 
 export interface MonthlyComparisonCardProps {
   option: any;
-  metric: 'expense' | 'income' | 'net';
-  onChangeMetric: (m: 'expense' | 'income' | 'net') => void;
-  compareMode: 'none' | 'mom' | 'yoy';
-  onChangeCompare: (m: 'none' | 'mom' | 'yoy') => void;
-  forecastOn: boolean;
-  onChangeForecast: (v: boolean) => void;
+  metric?: 'expense' | 'income' | 'net';
+  onChangeMetric?: (m: 'expense' | 'income' | 'net') => void;
+  compareMode?: 'none' | 'mom' | 'yoy';
+  onChangeCompare?: (m: 'none' | 'mom' | 'yoy') => void;
+  forecastOn?: boolean;
+  onChangeForecast?: (v: boolean) => void;
   onClickMonth?: (ym: string) => void;
 }
 
@@ -19,6 +19,7 @@ export default function MonthlyComparisonCard(props: MonthlyComparisonCardProps)
       title={
         <Space wrap>
           <span>月份对比</span>
+          {onChangeMetric && (
           <Segmented
             options={[
               { label: '支出', value: 'expense' },
@@ -27,7 +28,8 @@ export default function MonthlyComparisonCard(props: MonthlyComparisonCardProps)
             ]}
             value={metric}
             onChange={(v) => onChangeMetric(v as any)}
-          />
+          />)}
+          {onChangeCompare && (
           <Segmented
             options={[
               { label: '无对比', value: 'none' },
@@ -36,11 +38,11 @@ export default function MonthlyComparisonCard(props: MonthlyComparisonCardProps)
             ]}
             value={compareMode}
             onChange={(v) => onChangeCompare(v as any)}
-          />
-          <Space>
+          />)}
+          {onChangeForecast && (<Space>
             <span>预测</span>
             <Switch checked={forecastOn} onChange={onChangeForecast} />
-          </Space>
+          </Space>)}
         </Space>
       }
       bordered={false}

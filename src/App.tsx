@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Button, Card, Col, Layout, Row, Space, Statistic, Tabs, Typography, theme } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
@@ -10,8 +10,10 @@ import CategoryManager from './components/CategoryManager';
 import MerchantManager from './components/MerchantManager';
 import type { Transaction } from './types';
 import './App.css';
-import { db } from './store/db';
 import dayjs from 'dayjs';
+import useCategoryColors from './hooks/useCategoryColors';
+import useTransactionsStats from './hooks/useTransactionsStats';
+import useMonthlyChartOption from './hooks/useMonthlyChartOption';
 import AnalysisFilterBar from './components/AnalysisFilterBar';
 import SettingsDrawer from './components/SettingsDrawer';
 import SummaryOrPieCard from './components/SummaryOrPieCard';
@@ -29,32 +31,17 @@ function App() {
   const [monthFilter, setMonthFilter] = useState<dayjs.Dayjs | null>(null);
   const [activeTab, setActiveTab] = useState<'analysis' | 'monthly' | 'categories'>('analysis');
   const { token } = theme.useToken();
-  const [categoryColors, setCategoryColors] = useState<Record<string, string | undefined>>({});
+  const categoryColors = useCategoryColors();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // 刷新分类颜色（安全方案：低频轮询 + 比较，避免 Dexie Observable 依赖）
-  useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      const cats = await db.categories.toArray();
-      if (!mounted) return;
-      const map: Record<string, string | undefined> = {};
-      for (const c of cats) {
-        if (c.name) map[c.name] = typeof c.color === 'string' ? c.color : undefined;
-      }
-      setCategoryColors((prev) => {
-        const prevStr = JSON.stringify(prev);
-        const nextStr = JSON.stringify(map);
-        return prevStr === nextStr ? prev : map;
-      });
-    };
-    load();
-    const timer = setInterval(load, 2000);
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
-  }, []);
+  // 统计逻辑 & 月份图表（需在图表配置前准备好）
+  const { filtered, totals, byCategory, byAccount, topMerchants, monthly } = useTransactionsStats(
+    transactions,
+    view,
+    monthFilter,
+  );
+  const monthlyOption = useMonthlyChartOption(monthly, monthFilter);
+  const { option: monthlyChart } = monthlyOption as any;
 
   function mergeTransactions(base: Transaction[], incoming: Transaction[]): Transaction[] {
     const makeKey = (t: Transaction) => `${t.date}|${t.amount}|${t.merchant ?? ''}|${t.account ?? ''}`;
@@ -83,69 +70,9 @@ function App() {
     },
   };
 
-  const baseByMonth = useMemo(() => {
-    if (!monthFilter) return transactions;
-    return transactions.filter((t) => dayjs(t.date).isValid() && dayjs(t.date).isSame(monthFilter, 'month'));
-  }, [transactions, monthFilter]);
+  // 统计逻辑与分组由 hooks 提供
 
-  const filtered = useMemo(() => {
-    const flowOf = (t: Transaction) => (t.flow ?? (t.amount > 0 ? '收入' : '支出'));
-    if (view === '支出') return baseByMonth.filter((t) => flowOf(t) === '支出');
-    if (view === '收入') return baseByMonth.filter((t) => flowOf(t) === '收入');
-    return baseByMonth.filter((t) => flowOf(t) !== '转账');
-  }, [baseByMonth, view]);
-
-  const totals = useMemo(() => {
-    const flowOf = (t: Transaction) => (t.flow ?? (t.amount > 0 ? '收入' : '支出'));
-    const income = baseByMonth.filter((t) => flowOf(t) === '收入').reduce((s, t) => s + t.amount, 0);
-    const expense = Math.abs(baseByMonth.filter((t) => flowOf(t) === '支出').reduce((s, t) => s + t.amount, 0));
-    const net = income - expense;
-    return { income, expense, net };
-  }, [baseByMonth]);
-
-  const byCategory = useMemo(() => {
-    const sumByCategory = new Map<string, number>();
-    for (const t of filtered) {
-      const key = t.category ?? '未分类';
-      sumByCategory.set(key, (sumByCategory.get(key) ?? 0) + Math.abs(t.amount));
-    }
-    return Array.from(sumByCategory, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [filtered]);
-
-  const pieData = useMemo(() => {
-    return byCategory.map(({ name, value }) => ({
-      name,
-      value,
-      itemStyle: categoryColors[name] ? { color: categoryColors[name] } : undefined,
-    }));
-  }, [byCategory, categoryColors]);
-
-  const byAccount = useMemo(() => {
-    const sumByAcc = new Map<string, number>();
-    for (const t of baseByMonth) {
-      const key = t.account ?? '未标记';
-      sumByAcc.set(key, (sumByAcc.get(key) ?? 0) + t.amount);
-    }
-    return Array.from(sumByAcc, ([name, value]) => ({ name, value: Number(value.toFixed(2)) }));
-  }, [baseByMonth]);
-
-  const topMerchants = useMemo(() => {
-    const isIncome = view === '收入';
-    const isExpense = view === '支出' || view === '全部';
-    const agg = new Map<string, number>();
-    for (const t of filtered) {
-      const name = t.merchantNorm ?? t.merchant ?? '未知商户';
-      if (!name) continue;
-      if (isIncome && t.amount > 0) {
-        agg.set(name, (agg.get(name) ?? 0) + t.amount);
-      } else if (isExpense && t.amount < 0) {
-        agg.set(name, (agg.get(name) ?? 0) + Math.abs(t.amount));
-      }
-    }
-    const arr = Array.from(agg, ([name, value]) => ({ name, value: Number(value.toFixed(2)) }));
-    arr.sort((a, b) => b.value - a.value);
-    return arr.slice(0, 10);
-  }, [filtered, view]);
+  // byAccount/topMerchants 将由 useTransactionsStats 提供
 
   const isAllView = view === '全部';
   const chartOption = ((): any => {
@@ -166,6 +93,12 @@ function App() {
         ],
       };
     }
+    // 饼图数据基于分类聚合与颜色
+    const pieData = byCategory.map(({ name, value }) => ({
+      name,
+      value,
+      itemStyle: categoryColors[name] ? { color: categoryColors[name] } : undefined,
+    }));
     return {
       tooltip: { trigger: 'item' },
       series: [
@@ -179,128 +112,7 @@ function App() {
     };
   })();
 
-  // 月份对比：基于所有已导入交易，按月聚合（排除转账）
-  const monthly = useMemo(() => {
-    const flowOf = (t: Transaction) => (t.flow ?? (t.amount > 0 ? '收入' : '支出'));
-    const m = new Map<string, { income: number; expense: number; net: number }>();
-    for (const t of transactions) {
-      if (flowOf(t) === '转账') continue;
-      const ym = dayjs(t.date).isValid() ? dayjs(t.date).format('YYYY-MM') : '未知';
-      if (!m.has(ym)) m.set(ym, { income: 0, expense: 0, net: 0 });
-      const obj = m.get(ym)!;
-      if (flowOf(t) === '收入') obj.income += t.amount; else obj.expense += Math.abs(t.amount);
-      obj.net = obj.income - obj.expense;
-    }
-    const arr = Array.from(m, ([month, v]) => ({ month, ...v }));
-    arr.sort((a, b) => a.month.localeCompare(b.month));
-    return arr;
-  }, [transactions]);
-
-  const [monthlyMetric, setMonthlyMetric] = useState<'expense' | 'income' | 'net'>('expense');
-  const [compareMode, setCompareMode] = useState<'none' | 'mom' | 'yoy'>('none');
-  const [forecastOn, setForecastOn] = useState<boolean>(false);
-  const [maWindow] = useState<number>(3);
-  const monthlyChart = useMemo(() => {
-    const x = monthly.map((x) => x.month);
-    const y = monthly.map((x) => (monthlyMetric === 'expense' ? x.expense : monthlyMetric === 'income' ? x.income : x.net));
-    const color = monthlyMetric === 'expense' ? '#ff4d4f' : monthlyMetric === 'income' ? '#52c41a' : '#1677ff';
-
-    // 对比序列
-    let refData: Array<number | null> | null = null;
-    if (compareMode !== 'none' && x.length > 0) {
-      refData = new Array(x.length).fill(null);
-      if (compareMode === 'mom') {
-        const monthIndex = new Map<string, number>();
-        x.forEach((m, idx) => monthIndex.set(m, idx));
-        for (let i = 0; i < x.length; i += 1) {
-          const prevMonth = dayjs(x[i], 'YYYY-MM').add(-1, 'month').format('YYYY-MM');
-          const idx = monthIndex.get(prevMonth);
-          if (typeof idx === 'number') refData[i] = Number(y[idx]?.toFixed(2));
-        }
-      } else if (compareMode === 'yoy') {
-        const monthIndex = new Map<string, number>();
-        x.forEach((m, idx) => monthIndex.set(m, idx));
-        for (let i = 0; i < x.length; i += 1) {
-          const lastYear = dayjs(x[i], 'YYYY-MM').add(-1, 'year').format('YYYY-MM');
-          const idx = monthIndex.get(lastYear);
-          if (typeof idx === 'number') refData[i] = Number(y[idx]?.toFixed(2));
-        }
-      }
-    }
-
-    // 构造序列与横轴（含预测）
-    const xAll = [...x];
-    const series: any[] = [
-      { name: '本期', type: 'bar', data: y.map((n) => Number(n.toFixed(2))), barWidth: '45%', itemStyle: { color } },
-    ];
-    if (refData) {
-      series.push({
-        name: compareMode === 'mom' ? '上月' : '去年同月',
-        type: 'line',
-        smooth: false,
-        symbolSize: 6,
-        lineStyle: { type: 'dashed', width: 1.5 },
-        itemStyle: { color: '#8c8c8c' },
-        data: refData,
-      });
-    }
-    // 简单预测：MA(3)
-    let forecastPoint: { nextMonth: string; value: number } | null = null;
-    if (forecastOn && x.length >= maWindow) {
-      const lastN = y.slice(-maWindow);
-      const avg = lastN.reduce((s, v) => s + v, 0) / maWindow;
-      const nextMonth = dayjs(x[x.length - 1], 'YYYY-MM').add(1, 'month').format('YYYY-MM');
-      forecastPoint = { nextMonth, value: Number(avg.toFixed(2)) };
-      xAll.push(forecastPoint.nextMonth);
-      const predData = new Array(xAll.length).fill(null);
-      predData[predData.length - 1] = forecastPoint.value;
-      series.push({
-        name: '预测',
-        type: 'bar',
-        data: predData,
-        barWidth: '45%',
-        itemStyle: { color, opacity: 0.35, borderColor: color, borderType: 'dashed', borderWidth: 1 },
-      });
-    }
-
-    return {
-      tooltip: {
-        trigger: 'axis',
-        formatter: (params: any[]) => {
-          const cur = params.find((p) => p.seriesName === '本期');
-          const ref = params.find((p) => p.seriesName === (compareMode === 'mom' ? '上月' : '去年同月'));
-          const pred = params.find((p) => p.seriesName === '预测');
-          const curVal = typeof cur?.value === 'number' ? cur.value : null;
-          const refVal = typeof ref?.value === 'number' ? ref.value : null;
-          const predVal = typeof pred?.value === 'number' ? pred.value : null;
-          const title = params[0]?.axisValueLabel ?? '';
-          const lines: string[] = [];
-          if (cur) lines.push(`${cur.marker}${cur.seriesName}: ${curVal?.toFixed ? curVal.toFixed(2) : curVal}`);
-          if (ref && compareMode !== 'none') lines.push(`${ref.marker}${ref.seriesName}: ${refVal?.toFixed ? refVal.toFixed(2) : refVal}`);
-          if (pred) lines.push(`${pred.marker}${pred.seriesName}: ${predVal?.toFixed ? predVal.toFixed(2) : predVal}`);
-          if (curVal != null && refVal != null && refVal !== 0) {
-            const delta = curVal - refVal;
-            const pct = (delta / Math.abs(refVal)) * 100;
-            const sign = delta > 0 ? '+' : delta < 0 ? '' : '';
-            lines.push(`差值: ${sign}${delta.toFixed(2)} (${sign}${pct.toFixed(1)}%)`);
-          } else if (compareMode !== 'none') {
-            lines.push('差值: —');
-          }
-          return [title, ...lines].join('<br/>');
-        },
-      },
-      legend:
-        compareMode !== 'none'
-          ? { data: ['本期', compareMode === 'mom' ? '上月' : '去年同月', ...(forecastPoint ? ['预测'] : [])] }
-          : forecastPoint
-          ? { data: ['本期', '预测'] }
-          : undefined,
-      xAxis: { type: 'category', data: xAll },
-      yAxis: { type: 'value' },
-      series,
-      axisPointer: monthFilter ? { value: monthFilter.format('YYYY-MM'), snap: true } : undefined,
-    };
-  }, [monthly, monthlyMetric, compareMode, monthFilter, forecastOn, maWindow]);
+  // 上方已准备统计与 monthly 图表状态
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -366,12 +178,6 @@ function App() {
                     <Col span={24}>
                       <MonthlyComparisonCard
                         option={monthlyChart}
-                        metric={monthlyMetric}
-                        onChangeMetric={(m) => setMonthlyMetric(m)}
-                        compareMode={compareMode}
-                        onChangeCompare={(m) => setCompareMode(m)}
-                        forecastOn={forecastOn}
-                        onChangeForecast={setForecastOn}
                         onClickMonth={(ym) => { setMonthFilter(dayjs(ym, 'YYYY-MM')); setActiveTab('analysis'); }}
                       />
                     </Col>
