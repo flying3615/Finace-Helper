@@ -68,6 +68,72 @@ npm run dev
 - 储蓄卡收支模板：包含日期、收/支、商户、摘要、账户等。
 - 自动映射：程序会根据常见表头与内容自动推断 `date/merchant/amount/note/account/currency` 等字段及日期格式。
 
+## CSV 字段说明（重要）
+
+应用会尝试根据表头自动识别并映射字段。以下为支持的字段及同义表头。
+
+- 必要字段（至少需满足 日期 + 金额，且可识别金额正负）：
+  - `date`：交易日期。常见表头：`Date`、`Transaction Date`、`Trans Date`。
+  - `amount`：金额。常见表头：`Amount`、`Money`。
+  - 金额符号识别：
+    - 若存在 `type` 字段（常见值 `D`/`C` 或 `Debit`/`Credit`），则按 `D=支出(负)`、`C=收入(正)` 处理；
+    - 否则从 `amount` 正负号直接判断。
+
+- 推荐字段（可提升识别准确度）：
+  - `merchant`：商户/对手方。常见表头：`Merchant`、`Description`、`Payee`。
+  - `type`：借贷标记。常见表头：`Type`、`Dr/Cr`、`Debit/Credit`。
+  - `note`：备注/摘要。常见表头：`Note`、`Memo`、`Particulars`、`Code`、`Reference`（若这三个字段存在，将自动拼接到 `note`）。
+  - `account`：账户/卡号。常见表头：`Card`、`Account`、`Acct`（例如用卡号后四位标识）。
+  - `currency`：币种。常见表头：`Currency`。若缺失，可在解析映射中指定固定币种。
+
+- 日期格式：
+  - 自动支持 `DD/MM/YYYY`、`YYYY-MM-DD`、`DD-MM-YYYY` 等常见格式。
+  - 非标准格式可在解析映射中指定 `dateFormat`。
+
+- 去重规则：
+  - 按 `date|amount|merchant|account` 组合键去重，避免重复导入。
+
+### 模板 A：信用卡账单（示例）
+
+字段特点：含 `Type=D/C`、`Card`，`Amount` 为正数时仍需依据 `Type` 判定正负。
+
+```csv
+Date,Merchant,Amount,Type,Card,Reference
+12/03/2024,PAK N SAVE,120.50,D,****1234,TXN-1001
+13/03/2024,ONLINE REFUND,50.00,C,****1234,REF-2002
+```
+
+映射要点：
+- `date` ← Date（格式 DD/MM/YYYY）
+- `merchant` ← Merchant
+- `amount` ← Amount（结合 `type`：D=负，C=正）
+- `type` ← Type（D/C）
+- `account` ← Card（可用作账户/卡片标识）
+- `note` ← Reference（可选）
+
+### 模板 B：储蓄卡收支（示例）
+
+字段特点：部分银行提供 `Particulars/Code/Reference`，应用会自动拼接为 `note`。
+
+```csv
+Date,Merchant,Amount,Particulars,Code,Reference,Account
+2024-03-12,ALIPAY,-68.30,SHOP,001,ORDER-AAA,Main-001
+2024-03-15,SALARY,15000.00,Payroll,,MAR-2024,Main-001
+```
+
+映射要点：
+- `date` ← Date（格式 YYYY-MM-DD）
+- `merchant` ← Merchant
+- `amount` ← Amount（直接使用正负号）
+- `note` ← Particulars + Code + Reference（自动拼接，空值跳过）
+- `account` ← Account
+
+### 常见问题
+
+- “Project not found”（部署相关）：参见下文 Cloudflare Pages 部署说明。
+- CSV 无法识别日期/金额：请检查表头是否在以上同义词范围内，或规范日期格式。
+- 分列借/贷金额：目前推荐提供 `Amount` 单列 + `Type`（D/C）或直接在 `Amount` 中带正负号；不建议使用“借方金额/贷方金额”两列的格式。
+
 ## 数据与存储
 
 - 分类、规则、商户归一化规则：存储于 IndexedDB（Dexie），浏览器本地持久化。
